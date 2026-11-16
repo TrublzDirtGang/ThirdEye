@@ -1,0 +1,676 @@
+/* ThirdEye — Rebuild 1. Fresh app logic, written clean from the original
+ * content data. Vanilla JS router, live tone generator, journal, streaks.
+ * NO login, NO Firebase, NO cloud of any kind. Progress saves on this
+ * device only (localStorage). CEO, Founder and Creator: Trublz aka Joey Gets.
+ */
+
+const $ = (s) => document.querySelector(s);
+const app = document.getElementById("view");
+const esc = (s) => String(s == null ? "" : s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+
+/* ---------- on-device storage ---------- */
+const store = {
+  get(k, d) { try { const v = localStorage.getItem("te_" + k); return v ? JSON.parse(v) : d; } catch (e) { return d; } },
+  set(k, v) { try { localStorage.setItem("te_" + k, JSON.stringify(v)); } catch (e) {} },
+};
+const todayStr = () => new Date().toISOString().slice(0, 10);
+const isDone = (id) => store.get("done", []).includes(id);
+
+/* ---------- live tone generator (Web Audio, generated on-device) ---------- */
+let actx = null, osc = null, osc2 = null, gainNode = null, currentHz = 0, currentLabel = "";
+function toneHz(hz, label) {
+  stopTone();
+  actx = actx || new (window.AudioContext || window.webkitAudioContext)();
+  osc = actx.createOscillator();
+  gainNode = actx.createGain();
+  osc.type = "sine";
+  osc.frequency.value = hz;
+  gainNode.gain.value = 0.0001;
+  osc.connect(gainNode); gainNode.connect(actx.destination);
+  osc.start();
+  gainNode.gain.exponentialRampToValueAtTime(0.375, actx.currentTime + 1.5);
+  currentHz = hz; currentLabel = label || (hz + " Hz");
+  renderToneState();
+  try { store.set("tones_played", (store.get("tones_played", 0) || 0) + 1); } catch (e) {}
+}
+function toneBinaural(base, diff, label) {
+  stopTone();
+  actx = actx || new (window.AudioContext || window.webkitAudioContext)();
+  gainNode = actx.createGain();
+  gainNode.gain.value = 0.0001;
+  gainNode.connect(actx.destination);
+  const mk = (freq, pan) => {
+    const o = actx.createOscillator(), p = actx.createStereoPanner();
+    o.type = "sine"; o.frequency.value = freq; p.pan.value = pan;
+    o.connect(p); p.connect(gainNode); o.start();
+    return o;
+  };
+  osc = mk(base, -1); osc2 = mk(base + diff, 1);
+  gainNode.gain.exponentialRampToValueAtTime(0.33, actx.currentTime + 1.5);
+  currentHz = diff; currentLabel = label + " (binaural " + diff + " Hz)";
+  renderToneState();
+}
+function stopTone() {
+  if (osc) {
+    try { gainNode.gain.exponentialRampToValueAtTime(0.0001, actx.currentTime + 0.5); osc.stop(actx.currentTime + 0.6); if (osc2) osc2.stop(actx.currentTime + 0.6); } catch (e) {}
+    osc = null; osc2 = null; currentHz = 0; currentLabel = "";
+  }
+  renderToneState();
+}
+function renderToneState() {
+  const el = document.getElementById("toneState");
+  if (el) el.innerHTML = currentHz
+    ? `<div class="hz">${esc(currentLabel)}</div><p class="sub">playing… breathe slow · headphones on</p><button class="btn btn-ghost btn-block" onclick="stopTone()">⏹ Stop</button>`
+    : `<p class="sub">Pick a frequency below and press play.</p>`;
+}
+
+/* ---------- home tiles ---------- */
+const TILES = [
+  { h: "#/path", icon: "🛤️", t: "The Path", d: "7 stages of awakening, beginner to embodied" },
+  { h: "#/frequencies", icon: "🔊", t: "Frequency Lab", d: "Playable healing tones incl. Schumann" },
+  { h: "#/chakras", icon: "🌈", t: "Chakras", d: "All 7 energy centers explained" },
+  { h: "#/luminaries", icon: "🪐", t: "7 Luminaries", d: "Planets, metals, days & your body" },
+  { h: "#/fingers", icon: "🤲", t: "Mudra Library", d: "10 hand positions — every finger's chakra, with photos" },
+  { h: "#/points", icon: "📍", t: "Pressure Points", d: "12 key acupressure points" },
+  { h: "#/astral", icon: "🌌", t: "Astral Projection", d: "4 techniques, step by step" },
+  { h: "#/pineal", icon: "👁️", t: "Pineal Protocol", d: "Decalcify & activate the third eye" },
+  { h: "#/hearth", icon: "🔥", t: "The Hearth", d: "Celestial University teachings, decoded — free" },
+  { h: "#/hearth/pineal-deep", icon: "👁️", t: "Pineal Gland", d: "What it is, its history, decalcification — full guide" },
+  { h: "#/labels", icon: "🏷️", t: "The Labels", d: "Every disorder: spiritual, pineal & awakening links" },
+  { h: "#/diet", icon: "🥗", t: "Diet", d: "Dr. Sebi, electric foods & the proper diet" },
+  { h: "#/tesla", icon: "⚡", t: "Tesla", d: "The man, his research, 3-6-9 & the lost machines" },
+  { h: "#/shilajit", icon: "🧱", t: "Shilajit", d: "The rock you eat: minerals, power & safe use" },
+  { h: "#/manifest", icon: "🧲", t: "Manifestation", d: "How it works, the pineal link & the daily protocol" },
+  { h: "#/kundalini", icon: "🐍", t: "Kundalini", d: "The coiled serpent: map, signs, dangers & methods" },
+  { h: "#/oldworld", icon: "🏛️", t: "Old World", d: "Tartaria, mud flood, star forts & aether — decoded" },
+  { h: "#/bible", icon: "📖", t: "The Bible", d: "The metaphor manual: decode it, enter the inner chamber" },
+  { h: "#/scripture", icon: "📖", t: "Scripture", d: "Bible + Apocrypha in order, KJV text with decoded notes" },
+  { h: "#/sos", icon: "🆘", t: "Grounding SOS", d: "When it's too much — use this NOW" },
+  { h: "#/journal", icon: "📓", t: "Journal", d: "Log signs, dreams & synchronicities" },
+  { h: "#/practice", icon: "🔥", t: "Daily Practice", d: "Streaks & non-negotiable habits" },
+  { h: "#/journey", icon: "🏆", t: "The Journey", d: "Badges, progress & your awakening checklist" },
+];
+
+function creditCard() {
+  return `<div class="card gold" style="text-align:center"><p style="margin:4px 0;color:var(--gold);font-weight:800">CEO, Founder and Creator: Trublz aka Joey Gets</p><p class="sub" style="margin:4px 0">Dirty Town Technologies</p></div>`;
+}
+function doneButton(id, label) {
+  if (isDone(id)) return `<p style="color:var(--gold)">✅ Completed — counts toward your <a href="#/journey" style="color:var(--gold)">Journey badges</a>.</p>`;
+  return `<button class="btn btn-gold btn-block" onclick="markLessonDone('${esc(id)}')">✓ Mark ${esc(label || "lesson")} complete</button>
+    <p class="sub">Check it off — it feeds your progress bar and badges in <a href="#/journey" style="color:var(--gold)">The Journey</a>.</p>`;
+}
+function lessonSteps(steps) {
+  return (steps || []).map(s => s.d
+    ? `<div class="card"><h3>${s.t}</h3><p class="sub">${s.d}</p></div>`
+    : `<h3 class="step-head">${s.t}</h3>`).join("");
+}
+function photoCards(photo) {
+  if (!photo || typeof PHOTOS === "undefined") return "";
+  return (Array.isArray(photo) ? photo : [photo]).map(p => PHOTOS[p]
+    ? `<div class="card" style="padding:10px"><img src="${PHOTOS[p]}" alt="Photo" style="width:100%;border-radius:12px;display:block">${typeof PHOTO_CREDITS !== "undefined" && PHOTO_CREDITS[p] ? `<p class="sub" style="text-align:center;margin:8px 0 2px;font-size:11px;opacity:.75">📷 ${PHOTO_CREDITS[p]}</p>` : ""}</div>`
+    : "").join("");
+}
+
+/* ---------- views: home, path, frequencies, chakras ---------- */
+function vHome() {
+  return `<h1>👁️ ThirdEye</h1>
+  <div class="card"><input type="search" placeholder="🔍 Search the entire book…" onkeydown="if(event.key==='Enter'){location.hash='#/search/'+encodeURIComponent(this.value)}" style="width:100%;padding:12px;border-radius:10px;border:1px solid var(--gold);background:#1a1030;color:#fff;font-size:16px"></div>
+  ${creditCard()}
+  <p class="sub">Your field guide to awakening — from first questions to full embodiment. Purple skies, gold truth.</p>
+  <div class="section-grid">${TILES.map(t =>
+    `<a class="tile" href="${t.h}"><div class="icon">${t.icon}</div><h3>${t.t}</h3><p>${t.d}</p></a>`).join("")}</div>
+  <div class="card gold"><h3>🔥 Start here</h3><p class="sub">New? Walk <a href="#/path" style="color:var(--gold)">The Path</a> in order. Overwhelmed? Hit <a href="#/sos" style="color:var(--gold)">Grounding SOS</a> first — no shame, that's what it's for.</p></div>
+  <div class="card"><h3>📖 Prefer to read it straight through?</h3><p class="sub">The whole guide is also laid out as a book, chapter by chapter, in app order.</p><a class="btn btn-gold btn-block" href="book.html">Open the book →</a></div>`;
+}
+
+function vPath() {
+  return `<h2>🛤️ The Path</h2>
+  <div class="card gold"><h3>😕 Confused? Start here.</h3><p class="sub">What awakening IS, why 7 stages, why you prepare, what they do for you — and whether you even have to. <a href="#/hearth/path-explained" style="color:var(--gold)">Read the plain-English explainer →</a></p></div>
+  <p class="sub">The 7 stages of awakening. Read in order — each one prepares you for the next.</p>` +
+    PATH_STAGES.map(s => `<div class="card">
+      ${s.warning ? `<div class="warn"><b>⚠️ Go gently.</b> If this stage feels dangerous, talk to someone you trust or a professional. Seeking help is strength.</div>` : ""}
+      <h3>${s.icon} ${s.n}. ${s.title}</h3><p class="sub">${s.body}</p>
+      ${s.deep ? `<p><a href="#/hearth/${s.deep}" style="color:var(--gold)">📖 Go deeper: the full breakdown →</a></p>` : ""}
+      <b style="font-size:13px;color:var(--gold)">PRACTICES</b>
+      <ul class="clean">${s.practices.map(p => `<li>${p}</li>`).join("")}</ul></div>`).join("");
+}
+
+function vFrequencies() {
+  return `<h2>🔊 Frequency Lab</h2><p class="sub">Real tones, generated live on your device. Use headphones, sit comfortably, breathe slow.</p>
+  <div class="card gold tone-now" id="toneState"><p class="sub">Pick a frequency below and press play.</p></div>` +
+    FREQUENCIES.map(f => `<div class="card"><h3>${f.hz} Hz — ${f.name}</h3>
+      <p class="sub">${f.use}</p><p class="sub">🎯 <b>How to use it:</b> ${f.how}</p><p class="sub" style="color:var(--gold)">✦ ${f.chakra} chakra</p>
+      <button class="btn btn-gold btn-block" onclick="toneHz(${f.hz})">▶ Play ${f.hz} Hz</button></div>`).join("") +
+    `<div class="card"><h3>📻 About Schumann</h3><p class="sub">7.83 Hz is the Earth's electromagnetic heartbeat — the fundamental standing wave in the cavity between the Earth's surface and the ionosphere, a shell of charged air that lightning keeps striking like a bell. Physicist Winfried Schumann worked out the math in 1952; Nikola Tesla had predicted the resonance decades earlier. It is not alone: the cavity rings at harmonics too — roughly 14.3, 20.8, 27.3 and 33.8 Hz — and all three of the first tones are in this lab. It sits below human hearing, so you will not 'hear' it; the app renders it as a slow pulse you feel as deep calm. Why meditators care: the bottom edge of human brainwaves (deep relaxation, the drift toward sleep) lives in this same neighborhood, and some researchers have suggested our biology evolved bathed in this pulse — an intriguing idea, not a proven one. Traditionally used for grounding and deep meditation; scientifically, a measured fact of the planet you live on.</p></div>
+  <h2 style="margin-top:26px">🎧 Binaural Lab</h2><p class="sub">Two tones, one per ear — your brain hears the DIFFERENCE as a pulse. Headphones required. Pick your brainwave.</p>` +
+    BINAURAL.map(b => `<div class="card"><h3>${b.name}</h3>
+      <p class="sub">${b.use}</p><p class="sub">🎯 <b>How to use it:</b> ${b.how}</p>
+      <button class="btn btn-gold btn-block" onclick="toneBinaural(${b.base}, ${b.diff}, '${esc(b.name)}')">▶ Play (${b.base}/${b.base + b.diff} Hz)</button></div>`).join("") +
+    `<div class="card"><h3>⚡ Rife Frequencies</h3><p class="sub">Royal Raymond Rife was a 1930s inventor who claimed his ultra-powerful microscopes let him watch living pathogens — and that specific radio frequencies could shatter them like a singer breaking glass. His lab was raided, his work was buried in lawsuits and institutional hostility, and he died obscure in 1971. Whether he was a suppressed genius or a brilliant self-deceiver is still argued; what is certain is that the establishment of his day did not give him a fair hearing. The teaching keeps his frequency lists alive in underground manuals passed hand to hand. We do not list medical-target frequencies here (that is practitioner territory, and targeting disease with sound is not something to self-administer from an app) — but know the lineage: frequency as medicine is the oldest new idea in the world, and Rife is its patron saint.</p></div>
+  <div class="card" style="padding:10px"><h3>🎬 Frequency & Manifestation</h3><p class="sub">How the frequency you broadcast shapes what returns — the video guide.</p><video src="${typeof VIDEOS !== "undefined" ? (VIDEOS["manifest-video"] || "") : ""}" controls playsinline preload="metadata" style="width:100%;border-radius:12px;display:block;background:#000"></video><p class="sub" style="text-align:center;margin:8px 0 2px;font-size:11px;opacity:.75">🎬 @teslawaves3 on TikTok</p></div>
+  <div class="card"><h3>🎼 432 vs 440</h3><p class="sub">A=432 Hz was the common concert pitch through much of the classical era; A=440 was standardized by international conferences in the 20th century (ISO 1955). Advocates of 432 say it sounds warmer and measurably relaxes listeners more — and small studies have found 432 Hz music slightly lowers heart rate and blood pressure versus 440. You will also hear a darker story: that 440 was imposed by sinister forces, even named as a Goebbels decree. The honest note: that tale is unproven lore — 440 won through dull committees, not conspiracies. The useful part survives the debunking: run the experiment yourself. Play 432 above, then any 440-tuned song, and feel the difference in your own body. Your nervous system gets a vote.</p></div>`;
+}
+
+function vChakras() {
+  return `<h2>🌈 The 7 Chakras</h2><p class="sub">Energy centers running up your spine. Tap one to go deep.</p>` +
+    CHAKRAS.map(c => `<a class="tile" href="#/chakra/${c.id}" style="border-left:4px solid ${c.color}">
+      <h3><span class="chakra-dot" style="background:${c.color};color:${c.color}"></span>${c.name}</h3>
+      <p>${c.sanskrit} · ${c.location} · ${c.freq}</p></a>`).join("") +
+    `<a class="tile" href="#/hearth/color-magic" style="border-left:4px solid #c084fc"><div class="icon">🎨</div><h3>Color Magic</h3><p>What to wear, how to paint your home & feng shui for your chakras</p></a>`;
+}
+
+function vChakra(id) {
+  const c = CHAKRAS.find(x => x.id === id) || CHAKRAS[0];
+  const vc = store.get("visited_chakras", []);
+  if (!vc.includes(c.id)) { vc.push(c.id); store.set("visited_chakras", vc); }
+  return `<h2><span class="chakra-dot" style="background:${c.color};color:${c.color}"></span>${c.name}</h2>
+  <p class="sub">${c.sanskrit} · ${c.location} · ${c.element} · Finger: ${c.finger} · Tone: ${c.freq}</p>
+  <div class="card" style="border-color:${c.color}"><p>${c.theme}</p></div>
+  ${c.photo && typeof PHOTOS !== "undefined" && PHOTOS[c.photo] ? `<div class="card" style="padding:10px;border-color:${c.color}"><img src="${PHOTOS[c.photo]}" alt="${esc(c.name)} — color and body location" style="width:100%;border-radius:12px;display:block"><p class="sub" style="text-align:center;margin:8px 0 2px">${c.name} · ${c.location} · traditional art</p></div>` : ""}
+  <div class="card gold"><h3>🧘 Your practice for this chakra</h3>
+  <p class="sub">🔊 <b>Mantra:</b> <span style="font-size:1.5em;color:var(--gold)">${c.mantra}</span><br>Chant it on the exhale for 5–10 minutes — inhale normally, then voice the mantra slowly on the out-breath, ending with lips closed in a nasal hum. Feel the vibration at the chakra's location (${c.location.toLowerCase()}). The sound IS the tuning fork.</p>
+  <p class="sub">🗣️ <b>How to say it:</b> ${c.say}</p>
+  <p class="sub">🪑 <b>Position:</b> ${c.position} <a href="#/hearth/positions" style="color:var(--gold)">(see the Positions guide)</a></p>
+  <p class="sub">🌬️ <b>Breath:</b> ${c.breath} <a href="#/hearth/breath-pairing" style="color:var(--gold)">(see the Pairing guide)</a></p>
+  <p class="sub">🤲 <b>Hand mudra:</b> <a href="#/mudra/${c.mudra[0]}" style="color:var(--gold)">${c.mudra[1]}</a> — full photo guide in the Mudra Library.</p></div>
+  <div class="card"><h3>⚠️ Signs it's blocked</h3><ul class="clean">${c.blocked.map(b => `<li>${b}</li>`).join("")}</ul></div>
+  <div class="card"><h3>✨ How to balance it</h3><ul class="clean">${c.balance.map(b => `<li>${b}</li>`).join("")}</ul>
+  <button class="btn btn-gold btn-block" onclick="toneHz(${parseFloat(c.freq)})">▶ Play its tone (${c.freq})</button></div>
+  <div class="card gold tone-now" id="toneState"><p class="sub">Tone controls appear here.</p></div>
+  <a class="btn btn-ghost btn-block" href="#/chakras">← All chakras</a>`;
+}
+
+/* ---------- views: luminaries, mudras, points, astral, pineal ---------- */
+function vLuminaries() {
+  return `<h2>🪐 The 7 Luminaries</h2><p class="sub">The 7 visible wanderers of the ancient sky. The 7-day week is named after them — Sunday is literally the Sun's day, Monday the Moon's, and so on — and each day carries its luminary's frequency. Each one rules a day of your week, a metal, a chakra, and a part of your body — this is the clock you were built for. Real photos: amateur telescopes & Earth-based shots — no space-agency imagery.</p>` +
+    LUMINARIES.map(l => `<div class="card" style="border-left:4px solid ${l.color}">
+      <h3>${l.planet} — ${l.day}</h3>
+      ${typeof PHOTOS !== "undefined" && PHOTOS[l.photo] ? `<img src="${PHOTOS[l.photo]}" alt="${esc(l.planet)}" style="width:100%;max-width:280px;border-radius:50%;display:block;margin:10px auto;aspect-ratio:1;object-fit:cover">` : ""}
+      ${typeof PHOTO_CREDITS !== "undefined" && PHOTO_CREDITS[l.photo] ? `<p class="sub" style="text-align:center;font-size:11px;opacity:.75">📷 ${PHOTO_CREDITS[l.photo]}</p>` : ""}
+      <p class="sub"><b style="color:var(--gold)">What it IS:</b> ${l.astro}</p>
+      <p class="sub"><b style="color:var(--gold)">The myth:</b> ${l.myth}</p>
+      <p class="sub"><b style="color:var(--gold)">Why this day:</b> ${l.daywhy}</p>
+      ${l.polarity ? `<p class="sub"><b style="color:var(--gold)">Polarity:</b> ${l.polarity}</p>` : ""}
+      <p class="sub"><b style="color:var(--gold)">What it rules in you:</b> ${l.rules}</p>
+      <p class="sub"><b style="color:var(--gold)">How it connects to your body:</b> ${l.body}</p>
+      <p class="sub"><b style="color:var(--gold)">How to work with it:</b> ${l.practice}</p>
+      <p class="sub">Metal: <b style="color:var(--gold)">${l.metal}</b> · Chakra: ${l.chakra}</p></div>`).join("");
+}
+
+function vFingers() {
+  return `<h2>🤲 The Mudra Library</h2>
+  <p class="sub">In the yogic tradition every finger carries an element and a chakra — and every hand position (mudra) is a switch that routes energy through them. Below: each finger picked apart (its chakra, what it does, how to activate it), then the full library of 10 hand positions, each with its own photo.</p>
+  <div class="card">${typeof DIAGRAMS !== "undefined" ? (DIAGRAMS["mudra-handmap"] || "") : ""}</div>` +
+    MUDRAS.map(m => `<div class="card" style="border-left:4px solid ${m.color}"><h3>${m.finger} — ${m.element}</h3>
+      <p class="sub">Chakra: <b style="color:var(--gold)">${m.chakra}</b></p>
+      <p class="sub"><b>What this chakra does:</b> ${m.does}</p>
+      <p class="sub"><b>How to activate it:</b> ${m.activate}</p></div>`).join("") +
+    `<h3 style="color:var(--gold);margin:26px 0 4px">🤲 All 10 hand positions</h3>
+    <p class="sub">Tap any mudra for the exact hand position photo, what it activates, and how to verify it's working.</p>` +
+    MUDRA_LIB.map(m => `<a class="tile" href="#/mudra/${m.id}"><div class="icon">${m.icon}</div><h3>${m.title}</h3><p>${m.intro.slice(0, 95)}…</p></a>`).join("");
+}
+
+function vMudra(id) {
+  const l = MUDRA_LIB.find(x => x.id === id) || MUDRA_LIB[0];
+  const readMin = Math.max(2, Math.round(l.steps.reduce((a, s) => a + s.t.length + (s.d || "").length, 0) / 900));
+  return `<p class="sub"><a href="#/fingers" style="color:var(--gold)">← Mudra Library</a></p>
+    <h2>${l.icon} ${l.title}</h2>
+    <p class="sub">🤲 ${l.steps.length} sections · ~${readMin} min · FREE</p>
+    <div class="card gold"><p>${l.intro}</p></div>
+    ${typeof PHOTOS !== "undefined" && PHOTOS[id] ? `<div class="card" style="padding:10px"><img src="${PHOTOS[id]}" alt="${esc(l.title)} hand position photo" style="width:100%;border-radius:12px;display:block"><p class="sub" style="text-align:center;margin:10px 0 2px">👆 Hold your hand up and match this position exactly.</p></div>` : ""}` +
+    lessonSteps(l.steps) +
+    `<div class="card"><p class="sub">📓 <i>Practice it now — then write in your <a href="#/journal" style="color:var(--gold)">awakening journal</a> what you felt. Teaching it back is how it becomes yours.</i></p></div>
+    <div class="card" style="text-align:center">${doneButton(l.id, "mudra")}</div>`;
+}
+
+function vPoints() {
+  return `<h2>📍 Pressure Points</h2><p class="sub">12 key acupressure points. Firm pressure, slow breathing, 1–2 minutes each. Tap any point for the full deep lesson.</p>` +
+    PRESSURE_POINTS.map(p => {
+      const slug = (p.code || "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || p.name.toLowerCase().replace(/[^a-z0-9]+/g, "-");
+      const lid = "point-" + ({"ex-hn3": "yintang", "gv20": "baihui", "li4": "hegu", "pc6": "neiguan", "lv3": "taichong", "ki1": "yongquan", "st36": "zusanli", "ht7": "shenmen", "gb20": "fengchi", "pc8": "laogong", "ex-hn5": "taiyang", "sp6": "sanyinjiao"}[slug] || slug);
+      return `<a class="card" href="#/point/${lid}" style="display:block;border-left:4px solid ${p.color};text-decoration:none;color:inherit">
+      <h3>${p.name}</h3><p class="sub">${p.code} · ${p.loc}</p>
+      <p class="sub"><b>How:</b> ${p.how}</p><p class="sub"><b>For:</b> ${p.for}</p>
+      <p style="color:var(--gold);font-size:12px;margin-top:8px">📖 Full deep lesson →</p></a>`;
+    }).join("");
+}
+
+function vPointLesson(id) {
+  const l = PRESSURE_LESSONS.find(x => x.id === id) || PRESSURE_LESSONS[0];
+  const readMin = Math.max(2, Math.round(l.steps.reduce((a, s) => a + s.t.length + (s.d || "").length, 0) / 900));
+  return `<p class="sub"><a href="#/points" style="color:var(--gold)">← Pressure Points</a></p>
+    <h2>${l.icon} ${l.title}</h2>
+    <p class="sub">📖 ${l.steps.length} sections · ~${readMin} min read · FREE</p>
+    <div class="card gold"><p>${l.intro}</p></div>
+    ${photoCards(l.photo)}
+    ${l.diagram && !l.photo && typeof DIAGRAMS !== "undefined" && DIAGRAMS[l.diagram] ? `<div class="card">${DIAGRAMS[l.diagram]}</div>` : ""}` +
+    lessonSteps(l.steps) +
+    `<div class="card"><p class="sub">📓 <i>Write in your <a href="#/journal" style="color:var(--gold)">awakening journal</a> what clicked for you. Teaching it back is how it becomes yours.</i></p></div>
+    <div class="card" style="text-align:center">${doneButton(l.id)}</div>`;
+}
+
+function vAstral() {
+  return `<h2>🌌 Astral Projection</h2><p class="sub">Consciousness leaving the body — the most direct proof you're more than flesh. 10 techniques, easiest first — now with the vibrational stage, the paralysis gateway, the silver cord, and the full protection protocol. Never practice exhausted or afraid; ground after.</p>` +
+    ASTRAL_TECHS.map(a => `<div class="card"><h3>${a.name}</h3>
+      <p class="sub">By ${a.by} · <b style="color:var(--gold)">${a.level}</b></p>
+      <ol class="steps">${a.steps.map(s => `<li>${s}</li>`).join("")}</ol></div>`).join("") +
+    `<div class="warn"><b>🛡️ Safety:</b> Set a clear intention before every attempt. If fear spikes, press your feet together / wiggle toes to return. After any attempt, ground: cold water, food, bare feet on earth.</div>
+    <div class="card" style="text-align:center">${doneButton("astral-section", "section")}</div>`;
+}
+
+function vPineal() {
+  return `<h2>👁️ Pineal Protocol</h2><p class="sub">The pineal gland — your inner antenna. It calcifies with age and fluoride; this is how you reverse it. Give it 30 days.</p>` +
+    PINEAL_PROTOCOL.map((p, i) => `<div class="card"><h3>${i + 1}. ${p.t}</h3><p class="sub">${p.d}</p></div>`).join("") +
+    `<div class="card gold"><h3>🔊 852 Hz activation</h3><p class="sub">Dark room, 852 Hz tone, soft gaze at a candle flame. Start 5 minutes.</p>
+    <button class="btn btn-gold btn-block" onclick="toneHz(852)">▶ Play 852 Hz</button></div>
+    <div class="card gold tone-now" id="toneState"><p class="sub">Tone controls appear here.</p></div>`;
+}
+
+/* ---------- views: the hearth + its subsections ---------- */
+function hearthTiles(ids) {
+  return ids.map(id => HEARTH_LESSONS.find(l => l.id === id)).filter(Boolean)
+    .map(l => `<a class="tile" href="#/hearth/${l.id}"><div class="icon">${l.icon}</div><h3>${l.title}</h3><p>${l.intro.slice(0, 95)}…</p></a>`).join("");
+}
+function vHearth() {
+  return `<h2>🔥 The Hearth</h2><p class="sub">The teachings of Celestial University — picked apart and explained plainly, step by step, so anyone can get it. Free forever. We don't sell his book; we teach the knowledge.</p>` +
+    HEARTH_LESSONS.map(l => `<a class="tile" href="#/hearth/${l.id}">
+      <div class="icon">${l.icon}</div><h3>${l.title}</h3><p>${l.intro.slice(0, 90)}…</p>
+      <p style="color:var(--gold);font-size:12px;margin-top:8px">FREE · ${l.steps.length} steps →</p></a>`).join("");
+}
+function vHearthLesson(id) {
+  const l = HEARTH_LESSONS.find(x => x.id === id) || HEARTH_LESSONS[0];
+  const readMin = Math.max(2, Math.round(l.steps.reduce((a, s) => a + s.t.length + (s.d || "").length, 0) / 900));
+  return `<p class="sub"><a href="#/hearth" style="color:var(--gold)">← The Hearth</a></p>
+    <h2>${l.icon} ${l.title}</h2>
+    <p class="sub">📖 ${l.steps.length} sections · ~${readMin} min read · FREE</p>
+    <div class="card gold"><p>${l.intro}</p></div>
+    ${photoCards(l.photo)}
+    ${l.video && typeof VIDEOS !== "undefined" && VIDEOS[l.video] ? `<div class="card" style="padding:10px"><video src="${VIDEOS[l.video]}" controls playsinline preload="metadata" style="width:100%;border-radius:12px;display:block;background:#000"></video>${typeof VIDEO_CREDITS !== "undefined" && VIDEO_CREDITS[l.video] ? `<p class="sub" style="text-align:center;margin:8px 0 2px;font-size:11px;opacity:.75">🎬 ${VIDEO_CREDITS[l.video]}</p>` : ""}</div>` : ""}
+    ${l.diagram && !l.photo && typeof DIAGRAMS !== "undefined" && DIAGRAMS[l.diagram] ? `<div class="card">${DIAGRAMS[l.diagram]}</div>` : ""}` +
+    lessonSteps(l.steps) +
+    `<div class="card"><p class="sub">📓 <i>Write in your <a href="#/journal" style="color:var(--gold)">awakening journal</a> what clicked for you. Teaching it back is how it becomes yours.</i></p></div>
+    <div class="card" style="text-align:center">${doneButton(l.id)}</div>`;
+}
+function vShilajit() {
+  return `<h2>🧱 The Shilajit Section</h2><p class="sub">The natural mineral from the Earth — what it is, what it actually does, and how to use it safely. Knowledge should be free.</p>` +
+    hearthTiles(["shilajit", "shilajit-power", "shilajit-guide", "shilajit-sourcing"]);
+}
+function vTesla() {
+  return `<h2>⚡ The Tesla Section</h2><p class="sub">Nikola Tesla — the man, his documented research picked apart, the 3-6-9 teaching with legend separated from record, and the lost machines. Knowledge should be free.</p>` +
+    hearthTiles(["tesla-life", "tesla-research", "tesla369", "tesla-369", "tesla-generators", "tesla-practice", "tesla-workshop", "living-369", "ether", "scalar"]);
+}
+function vKundalini() {
+  return `<h2>🐍 The Kundalini Section</h2><p class="sub">The coiled serpent power — the 2,800-year-old map of the inner fire. Origins, the body map, signs, the dangers, the methods, and the one current in many languages. Read the ⚠️ lesson before any intense practice.</p>` +
+    hearthTiles(["kundalini", "kundalini-origins", "kundalini-map", "kundalini-signs", "kundalini-syndrome", "kundalini-activate", "kundalini-christos"]);
+}
+function vOldWorld() {
+  return `<h2>🏛️ The Old World Section</h2><p class="sub">Tartaria, the mud flood, star forts, cathedrals as frequency machines, aether energy — torn apart with honest labels. Documented stays documented.</p>` +
+    hearthTiles(["tartaria", "tartaria-name", "mudflood", "star-forts", "cathedral-sound", "glass-light", "aether-old-world", "reset-fairs", "old-world-ties"]);
+}
+function vDiet() {
+  return `<h2>🥗 The Diet Section</h2><p class="sub">Everything the teaching says about food: Dr. Sebi's method, the electric food list, the daily protocol — plus water, energy eating, and deep health.</p>` +
+    hearthTiles(["drsebi", "sebi-foods", "sebi-food-guide", "sebi-herbs", "sebi-sourcing", "diet-proper", "diet", "dead-flesh", "energy-pyramid", "water", "deephealth"]);
+}
+function vManifest() {
+  return `<h2>🧲 The Manifestation Section</h2><p class="sub">How manifestation actually works: the physics of thought, the daily protocol, the pineal connection, the frequency you broadcast — and why it fails. Knowledge should be free.</p>` +
+    hearthTiles(["manifestation", "manifest-how", "manifest-pineal", "manifest-frequency", "manifest-blocks"]);
+}
+function vBible() {
+  return `<h2>📖 The Bible Section</h2><p class="sub">The Bible as a metaphor manual for inner work: how to decode it, the inner chamber, the one teaching behind Jesus, Muhammad and Buddha — plus the Old Testament, New Testament and lost books, decoded.</p>` +
+    hearthTiles(["bible-decoded", "bible-metaphors", "bible-inner-chamber", "bible-prophets-one", "bible-ot", "bible-nt", "bible-apocrypha", "bible-enoch", "removed-books", "removed-books-2", "bible-144000", "bible-144000-rhymes"]);
+}
+
+/* ---------- views: labels ---------- */
+function vLabels() {
+  return `<h2>🏷️ The Labels</h2>
+  <p class="sub">Every major diagnosis, examined through three lenses: what psychiatry says, what it may mean spiritually, what the pineal gland has to do with it — and what it could have to do with an awakening. Education, not diagnosis. Nothing here replaces professional help.</p>
+  <div class="warn"><b>⚠️ Read this first:</b> mental suffering is real whatever lens you use. The teaching's reframes are meant to add understanding, not to replace care. Never stop prescribed medication because of a lesson — that's a doctor conversation.</div>` +
+    DISORDERS.map(d => `<a class="tile" href="#/label/${d.id}">
+      <div class="icon">${d.icon}</div><h3>${d.name}</h3><p>${d.spiritual.slice(0, 95)}…</p></a>`).join("");
+}
+function vLabel(id) {
+  const d = DISORDERS.find(x => x.id === id) || DISORDERS[0];
+  const lens = [["🏥 Psychiatry says", d.clinical], ["🕊️ The spiritual reframe", d.spiritual], ["👁️ The pineal connection", d.pineal], ["⚡ The awakening link", d.awakening]];
+  if (d.early) lens.push(["🔮 Seeing it before it happens — early warning signs", d.early]);
+  return `<p class="sub"><a href="#/labels" style="color:var(--gold)">← The Labels</a></p>
+    <h2>${d.icon} ${d.name}</h2>` +
+    lens.map(l => `<div class="card"><h3>${l[0]}</h3><p class="sub">${l[1]}</p></div>`).join("") +
+    `<div class="card gold"><h3>🧭 What to do</h3><p class="sub">${d.do}</p></div>
+    <div class="warn"><b>If it gets dark:</b> US 988 · Canada 1-833-456-4566 · UK/Ireland 116 123. Seeking help is strength — the teaching says so too.</div>
+    <a class="btn btn-ghost btn-block" href="#/labels">← All labels</a>`;
+}
+
+/* ---------- views: SOS, journal, practice ---------- */
+function vSos() {
+  trackVisit("sos");
+  return `<h2>🆘 Grounding SOS</h2><p class="sub">Too much, too fast? Do this now, in order. You are safe. This passes.</p>` +
+    SOS_STEPS.map((s, i) => `<div class="card"><h3>${i + 1}. ${s.t}</h3><p class="sub">${s.d}</p></div>`).join("") +
+    `<div class="warn"><b>If it stays dark:</b> talk to someone you trust, or a professional. Spiritual crisis is real and help is strength — the national crisis line in the US is 988, in Canada 1-833-456-4566.</div>`;
+}
+
+function vJournal() {
+  const entries = store.get("journal", []);
+  const prompt = JOURNAL_PROMPTS[new Date().getDate() % JOURNAL_PROMPTS.length];
+  return `<h2>📓 Awakening Journal</h2>
+  <div class="card gold"><h3>What IS an awakening journal?</h3>
+  <p class="sub">It's not a diary. It's a <b>lab notebook for your consciousness</b>. When awakening starts, strange things happen — vivid dreams, coincidences, body sensations, insights that vanish by morning. If you don't write them down, you'll convince yourself they didn't happen. Written down, patterns emerge over weeks: your dreams get clearer before your intuition sharpens; your symptoms spike before breakthroughs. The journal is how you prove to yourself it's real.</p>
+  <p class="sub"><b>What to write:</b> dreams (every fragment), synchronicities (what happened + the timing), body sensations during practice (where exactly), insights and the beliefs they replaced, moon phase + energy level, what you created that day.</p></div>
+  <div class="card"><h3>💡 Today's prompt</h3><p class="sub"><i>"${esc(prompt)}"</i></p>
+  <label class="f-label">New entry</label>
+  <textarea id="jtext" rows="4" placeholder="Write freely — no one reads this but you."></textarea>
+  <button class="btn btn-gold btn-block" onclick="saveJournal()">Save entry</button></div>` +
+    (entries.length ? entries.slice().reverse().map(e => `<div class="journal-entry"><div class="date">${esc(e.d)}</div><p>${e.t}</p></div>`).join("")
+    : `<div class="card"><p class="sub"><i>No entries yet. Your first one: write what brought you here — what happened that made you download this app?</i></p></div>`);
+}
+function saveJournal() {
+  const t = document.getElementById("jtext").value.trim();
+  if (!t) return;
+  const entries = store.get("journal", []);
+  entries.push({ d: new Date().toLocaleString(), t: esc(t) });
+  store.set("journal", entries);
+  location.hash = "#/journal"; render();
+}
+
+function dayStreak() {
+  const days = store.get("streak", []); let s = 0; const d = new Date();
+  while (days.includes(d.toISOString().slice(0, 10))) { s++; d.setDate(d.getDate() - 1); }
+  return s;
+}
+function vPractice() {
+  const days = store.get("streak", []);
+  const t = todayStr();
+  const done = days.includes(t);
+  const streak = dayStreak();
+  return `<h2>🔥 Daily Practice</h2><p class="sub">One non-negotiable practice a day keeps the awakening on track. Check in to keep your streak.</p>
+  <div class="card" style="text-align:center"><div class="streak-ring">${streak}</div>
+  <p class="sub">day streak</p>
+  ${done ? `<p style="color:var(--gold)">✅ Checked in today. See you tomorrow.</p>`
+    : `<button class="btn btn-gold btn-block" onclick="checkIn()">✓ I practiced today</button>`}</div>
+  <div class="card"><h3>Pick your non-negotiable</h3><ul class="clean">
+  <li>🧘 10 min silent sitting</li><li>🔊 One frequency session</li><li>🚶 Barefoot grounding 10 min</li>
+  <li>📓 Journal one page</li><li>🌬️ 5 rounds box breathing</li></ul></div>`;
+}
+function checkIn() {
+  const days = store.get("streak", []);
+  const t = todayStr();
+  if (!days.includes(t)) days.push(t);
+  store.set("streak", days);
+  render();
+}
+
+/* ---------- scripture reader ---------- */
+let SCRIPTURE_NOTES = null;
+function scriptureNotes() {
+  if (SCRIPTURE_NOTES) return SCRIPTURE_NOTES;
+  const notes = {};
+  const map = { "genesis": "genesis", "genesis-fall": "genesis", "john1": "john", "matthew6": "matthew",
+    "galatians4": "galatians", "revelation21": "revelation", "zechariah4": "zechariah", "romans7": "romans",
+    "ezekiel1": "ezekiel", "psalm23": "psalms", "john3": "john", "matthew13": "matthew", "corinthians15": "corinthians1",
+    "genesis2": "genesis", "exodus3": "exodus", "exodus20": "exodus", "psalm91": "psalms", "ezekiel37": "ezekiel",
+    "jonah": "jonah", "luke10": "luke", "john15": "john", "corinthians13": "corinthians1", "romans8": "romans",
+    "matthew5": "matthew", "matthew7": "matthew", "isaiah6": "isaiah", "daniel7": "daniel",
+    "genesis4": "genesis", "psalm46": "psalms", "isaiah40": "isaiah", "matthew25": "matthew",
+    "john10": "john", "acts2": "acts", "hebrews11": "hebrews", "revelation3": "revelation",
+    "revelation7": "revelation", "revelation14": "revelation",
+    "proverbs3": "proverbs", "ecclesiastes3": "ecclesiastes", "song2": "song", "isaiah53": "isaiah",
+    "mark8": "mark", "ephesians6": "ephesians", "philippians4": "philippians", "james1": "james",
+    "ruth1": "ruth", "samuel16": "samuel1", "kings19": "kings1", "psalm139": "psalms",
+    "jeremiah29": "jeremiah", "micah6": "micah", "galatians5": "galatians", "john11": "john",
+    "psalm27": "psalms", "isaiah9": "isaiah", "job38": "job", "luke15": "luke",
+    "romans12": "romans", "colossians3": "colossians", "hebrews12": "hebrews", "peter5": "peter1",
+    "leviticus19": "leviticus", "numbers6": "numbers", "deuteronomy6": "deuteronomy", "joshua1": "joshua",
+    "judges6": "judges", "samuel2-7": "samuel2", "kings2-2": "kings2", "chronicles1-29": "chronicles1",
+    "chronicles2-7": "chronicles2", "ezra3": "ezra", "nehemiah8": "nehemiah", "esther4": "esther",
+    "lamentations3": "lamentations", "hosea6": "hosea", "joel2": "joel", "amos5": "amos",
+    "obadiah1": "obadiah", "nahum1": "nahum", "habakkuk2": "habakkuk", "zephaniah3": "zephaniah",
+    "haggai2": "haggai", "malachi3": "malachi", "wisdom7": "wisdom", "sirach2": "sirach",
+    "tobit12": "tobit", "judith13": "judith", "esther14": "esther-add", "baruch3": "baruch",
+    "letterjer": "letter-jeremiah", "susanna": "susanna", "beldragon": "bel-dragon",
+    "maccabees1-2": "maccabees1", "maccabees2-7": "maccabees2", "manasses": "prayer-manasses",
+    "esdras1-4": "esdras1", "esdras2-2": "esdras2",
+    "corinthians2-4": "corinthians2", "thessalonians1-4": "thessalonians1", "thessalonians2-2": "thessalonians2",
+    "timothy1-4": "timothy1", "timothy2-1": "timothy2", "titus2": "titus", "philemon": "philemon",
+    "peter2-1": "peter2", "e1john1": "john1", "e2john": "john2", "e3john": "john3", "jude": "jude" };
+  if (typeof SCRIPTURE !== "undefined") SCRIPTURE.forEach(b => {
+    const target = map[b.id];
+    if (!target) return;
+    (b.chapters || []).forEach(c => (c.verses || []).forEach(v => {
+      if (!v.note) return;
+      notes[target] = notes[target] || {};
+      notes[target][c.n] = notes[target][c.n] || {};
+      notes[target][c.n][v.n] = v.note;
+    }));
+  });
+  SCRIPTURE_NOTES = notes;
+  return notes;
+}
+function scriptureBooks() {
+  const full = (typeof SCRIPTURE_FULL !== "undefined") ? SCRIPTURE_FULL : [];
+  const extra = (typeof SCRIPTURE !== "undefined") ? SCRIPTURE.filter(b => ["thomas", "genesis-fall"].indexOf(b.id) !== -1) : [];
+  return full.concat(extra);
+}
+function vScripture() {
+  const books = scriptureBooks();
+  return `<h2>📖 Scripture Reader</h2>
+  <p class="sub">The Bible and the Apocrypha in canonical order, King James text (public domain) — with the metaphor decoded verse by verse. Tap 🔍 on any verse to see what it means.</p>` +
+    books.map(b => `<a class="tile" href="#/scripture/${b.id}"><div class="icon">📖</div><h3>${b.name}</h3><p>${((b.intro || (b.testament === "APOCRYPHA" ? "Deuterocanonical book" : "King James text"))).slice(0, 95)}…</p></a>`).join("");
+}
+function vScriptureBook(id) {
+  const b = scriptureBooks().find(x => x.id === id);
+  if (!b) return `<h2>Not found</h2><p class="sub">That book isn't in this reader. <a href="#/scripture" style="color:var(--gold)">All books →</a></p>`;
+  return `<h2>📖 ${b.name}</h2><p class="sub">${b.intro || ("King James Version (public domain)" + (b.testament === "APOCRYPHA" ? " — deuterocanonical, in its traditional place" : ""))}</p>` +
+    b.chapters.map(c => `<a class="tile" href="#/scripture/${b.id}/${c.n}"><div class="icon">📄</div><h3>Chapter ${c.n}</h3><p>${c.verses.length} verses with notes</p></a>`).join("");
+}
+function vScriptureChapter(bookId, chN) {
+  const b = scriptureBooks().find(x => x.id === bookId);
+  const c = b && b.chapters.find(x => x.n === Number(chN));
+  if (!c) return `<h2>Not found</h2><p class="sub"><a href="#/scripture" style="color:var(--gold)">All books →</a></p>`;
+  try {
+    const key = bookId + ":" + chN;
+    const read = store.get("chapters_read_list", []);
+    if (!read.includes(key)) { read.push(key); store.set("chapters_read_list", read); store.set("chapters_read", read.length); }
+  } catch (e) {}
+  const notes = scriptureNotes();
+  const verses = c.verses.map(v => {
+    const note = (notes[bookId] && notes[bookId][c.n] && notes[bookId][c.n][v.n]) || v.note;
+    return `
+    <div class="card" style="margin-bottom:8px">
+      <p><b style="color:var(--gold)">${v.n}</b> ${v.t}</p>
+      ${note ? `<a href="javascript:void(0)" onclick="this.nextElementSibling.style.display=this.nextElementSibling.style.display==='none'?'block':'none'" style="color:var(--gold);font-size:14px">🔍 what this means</a><div style="display:none;margin-top:8px;padding:10px;border-left:3px solid var(--gold);background:rgba(255,215,0,.06);border-radius:8px"><p class="sub" style="margin:0">${note}</p><p style="margin:8px 0 0"><a href="#/hearth/bible-metaphors" style="color:var(--gold);font-size:13px">Learn the decoding method →</a></p></div>` : ""}
+    </div>`; }).join("");
+  return `<h2>${b.name} ${c.n} <span class="sub">KJV</span></h2>
+  <p class="sub"><a href="#/scripture/${b.id}" style="color:var(--gold)">← ${b.name}</a> · <a href="#/scripture" style="color:var(--gold)">All books</a></p>${verses}`;
+}
+
+/* ---------- search ---------- */
+let SEARCH_INDEX = null;
+function buildSearchIndex() {
+  if (SEARCH_INDEX) return SEARCH_INDEX;
+  const idx = [];
+  const add = (icon, type, title, desc, href, extra) => idx.push({ icon, type, title, desc, href, hay: (title + " " + desc + " " + (extra || "")).toLowerCase() });
+  TILES.forEach(t => add(t.icon, "Section", t.t, t.d, t.h, ""));
+  HEARTH_LESSONS.forEach(l => {
+    const steps = (l.steps || []).map(x => x.t + " " + (x.d || "").slice(0, 200)).join(" ");
+    add(l.icon || "🔥", "Lesson", l.title, l.intro, "#/hearth/" + l.id, steps);
+  });
+  CHAKRAS.forEach(c => add("🌈", "Chakra", c.name, (c.sanskrit || "") + " — " + (c.location || ""), "#/chakra/" + c.id, (c.element || "") + " " + (c.mantra || "")));
+  LUMINARIES.forEach(l => add("🪐", "Luminary", l.planet + " — " + l.day, l.metal + ", " + l.chakra, "#/luminaries", (l.daywhy || "") + " " + (l.polarity || "")));
+  MUDRA_LIB.forEach(m => add(m.icon || "🤲", "Mudra", m.title, m.intro, "#/mudra/" + m.id, ""));
+  PRESSURE_POINTS.forEach(pt => add("📍", "Pressure Point", pt.name, pt.code + " — " + pt.loc, "#/points", (pt.for || "") + " " + (pt.how || "")));
+  DISORDERS.forEach(d => add(d.icon || "🏷️", "Label", d.name, (d.clinical || "").slice(0, 120), "#/label/" + d.id, (d.spiritual || "").slice(0, 200)));
+  if (typeof SCRIPTURE !== "undefined") SCRIPTURE.forEach(b => {
+    add("📖", "Scripture", b.name, b.intro || "", "#/scripture/" + b.id, "");
+    (b.chapters || []).forEach(c => (c.verses || []).forEach(v => {
+      add("📄", "Verse", b.name + " " + c.n + ":" + v.n, v.t.slice(0, 120), "#/scripture/" + b.id + "/" + c.n, v.note || "");
+    }));
+  });
+  SEARCH_INDEX = idx;
+  return idx;
+}
+function vSearch(q) {
+  q = (q || "").trim().toLowerCase();
+  const idx = buildSearchIndex();
+  let results = "";
+  if (q.length >= 2) {
+    const words = q.split(/\s+/);
+    const hits = idx.filter(e => words.every(w => e.hay.includes(w))).slice(0, 60);
+    results = hits.length
+      ? `<p class="sub">${hits.length} result${hits.length > 1 ? "s" : ""}</p>` + hits.map(e =>
+        `<a class="tile" href="${e.href}"><div class="icon">${e.icon}</div><h3>${e.title}</h3><p><b style="color:var(--gold)">${e.type}</b> — ${e.desc.slice(0, 110)}…</p></a>`).join("")
+      : `<div class="card"><p>Nothing found for "<b>${esc(q)}</b>". Try fewer words — "pineal", "sebi", "moon", "psalm".</p></div>`;
+  } else {
+    results = `<div class="card"><p class="sub">Type 2+ letters to search every lesson, section, chakra, luminary, mudra, pressure point, label, and scripture verse in the book.</p></div>`;
+  }
+  return `<h2>🔍 Search the Book</h2>
+  <div class="card"><input id="q" type="search" placeholder="pineal, sebi, moon, thomas…" oninput="location.hash='#/search/'+encodeURIComponent(this.value)" style="width:100%;padding:12px;border-radius:10px;border:1px solid var(--gold);background:#1a1030;color:#fff;font-size:16px"></div>
+  ${creditCard()}
+  <div class="section-grid">${results}</div>`;
+}
+
+/* ---------- the journey: badges & progress ---------- */
+const BADGES = [
+  { id: "first-step", icon: "🌱", name: "The Awakening Begins", d: "Completed 'Start Here: The Absolute Basics'.", test: () => isDone("start-here") },
+  { id: "grounded", icon: "🦶", name: "Feet on the Earth", d: "Completed 'Grounding: What's ACTUALLY Happening'.", test: () => isDone("grounding-deep") },
+  { id: "sos-ready", icon: "🆘", name: "Emergency Trained", d: "Opened Grounding SOS — you know where to go when it's too much.", test: () => (store.get("visited", []).includes("sos")) },
+  { id: "third-eye", icon: "👁️", name: "Third Eye Opening", d: "Completed the full Pineal Gland guide.", test: () => isDone("pineal-deep") },
+  { id: "tuner", icon: "🔊", name: "Frequency Tuner", d: "Played a tone in the Frequency Lab.", test: () => store.get("tones_played", 0) > 0 },
+  { id: "chakra-walker", icon: "🌈", name: "Chakra Walker", d: "Visited all 7 chakras.", test: () => (store.get("visited_chakras", []).length >= 7) },
+  { id: "mudra-adept", icon: "🤲", name: "Mudra Adept", d: "Completed all 10 mudras.", test: () => MUDRA_LIB.filter(m => isDone(m.id)).length >= 10 },
+  { id: "point-healer", icon: "📍", name: "Point Healer", d: "Completed all 12 pressure points.", test: () => PRESSURE_LESSONS.filter(p => isDone(p.id)).length >= 12 },
+  { id: "astral-traveler", icon: "🌌", name: "Astral Traveler", d: "Completed the Astral Projection section.", test: () => isDone("astral-section") },
+  { id: "tesla-scholar", icon: "⚡", name: "Tesla Scholar", d: "Completed every Tesla lesson.", test: () => ["tesla-life", "tesla-research", "tesla-369", "tesla-generators", "tesla-practice", "tesla-workshop", "living-369"].every(isDone) },
+  { id: "alchemist", icon: "🥗", name: "Body Alchemist", d: "Completed the Diet & Sebi lessons.", test: () => ["diet-proper", "sebi-foods", "sebi-herbs", "sebi-sourcing", "sebi-food-guide"].every(isDone) },
+  { id: "serpent", icon: "🐍", name: "Serpent Risen", d: "Completed every Kundalini lesson.", test: () => ["kundalini", "kundalini-origins", "kundalini-map", "kundalini-signs", "kundalini-syndrome", "kundalini-activate", "kundalini-christos"].every(isDone) },
+  { id: "manifestor", icon: "🧲", name: "Conscious Manifestor", d: "Completed every Manifestation lesson.", test: () => ["manifestation", "manifest-how", "manifest-pineal", "manifest-frequency", "manifest-blocks"].every(isDone) },
+  { id: "old-world", icon: "🏛️", name: "Old World Explorer", d: "Completed 'How It All Ties Together'.", test: () => isDone("old-world-ties") },
+  { id: "moon-scholar", icon: "🌙", name: "Moon Scholar", d: "Completed all three Vault of Wisdom lessons.", test: () => ["moon-calendar", "sky-clock", "calendar-deception"].every(isDone) },
+  { id: "indigo-seer", icon: "👽", name: "Indigo Seer", d: "Completed the Indigo & Starseed lesson.", test: () => isDone("indigo-starseed") },
+  { id: "scripture-scholar", icon: "📖", name: "Scripture Scholar", d: "Read 10 decoded scripture chapters.", test: () => store.get("chapters_read", 0) >= 10 },
+  { id: "journal-keeper", icon: "📓", name: "Journal Keeper", d: "Wrote 7 journal entries.", test: () => store.get("journal", []).length >= 7 },
+  { id: "seeker", icon: "🔍", name: "Seeker", d: "Completed 10 lessons.", test: () => store.get("done", []).length >= 10 },
+  { id: "student", icon: "📚", name: "Dedicated Student", d: "Completed 25 lessons.", test: () => store.get("done", []).length >= 25 },
+  { id: "scholar", icon: "🎓", name: "Hearth Scholar", d: "Completed 50 Hearth lessons.", test: () => store.get("done", []).length >= 50 },
+  { id: "week-keeper", icon: "🔥", name: "Week Keeper", d: "7-day practice streak.", test: () => dayStreak() >= 7 },
+  { id: "month-keeper", icon: "🔥", name: "Month Keeper", d: "30-day practice streak.", test: () => dayStreak() >= 30 },
+  { id: "master", icon: "👑", name: "Hearth Master", d: "Completed every Hearth lesson. The whole book.", test: () => HEARTH_LESSONS.every(l => isDone(l.id)) },
+];
+function markLessonDone(id) {
+  const done = store.get("done", []);
+  if (!done.includes(id)) { done.push(id); store.set("done", done); }
+  const fresh = checkBadges();
+  if (fresh.length) { store.set("fresh_badges", fresh); }
+  render();
+}
+function checkBadges() {
+  const earned = store.get("badges", []);
+  const fresh = [];
+  for (const b of BADGES) {
+    if (!earned.includes(b.id)) {
+      try { if (b.test()) { earned.push(b.id); fresh.push(b.id); } } catch (e) {}
+    }
+  }
+  if (fresh.length) store.set("badges", earned);
+  return fresh;
+}
+function trackVisit(key) {
+  const v = store.get("visited", []);
+  if (!v.includes(key)) { v.push(key); store.set("visited", v); }
+  checkBadges();
+}
+function vJourney() {
+  checkBadges();
+  const earned = store.get("badges", []);
+  const fresh = store.get("fresh_badges", []);
+  if (fresh.length) store.set("fresh_badges", []);
+  const doneCount = store.get("done", []).length;
+  const total = HEARTH_LESSONS.length;
+  const pct = Math.round(doneCount / total * 100);
+  const newBadges = BADGES.filter(b => fresh.includes(b.id));
+  return `<h2>🏆 The Journey</h2>
+  <p class="sub">Your awakening, tracked. Complete lessons, keep your streak, earn badges. This is your proof of how far you've come.</p>
+  ${newBadges.length ? `<div class="card gold" style="text-align:center"><h3>🎉 New badge${newBadges.length > 1 ? "s" : ""} earned!</h3>` +
+    newBadges.map(b => `<p style="font-size:20px">${b.icon} <b>${b.name}</b><br><span class="sub">${b.d}</span></p>`).join("") + `</div>` : ""}
+  <div class="card"><h3>📖 Lessons completed</h3>
+    <p><b>${doneCount}</b> of ${total} (${pct}%)</p>
+    <div class="progress-track"><div class="progress-fill" style="width:${pct}%"></div></div></div>
+  <div class="card"><h3>🔥 Practice streak</h3><p><b>${dayStreak()}</b> days · <a href="#/practice" style="color:var(--gold)">check in today →</a></p></div>
+  <h3 style="color:var(--gold);margin:18px 0 8px">Badges — ${earned.length} of ${BADGES.length}</h3>
+  <div class="badge-grid">` +
+  BADGES.map(b => {
+    const has = earned.includes(b.id);
+    return `<div class="card badge ${has ? "" : "locked"}">
+      <div class="bicon">${b.icon}</div>
+      <p style="margin:6px 0 2px"><b>${b.name}</b></p>
+      <p class="sub" style="font-size:12px;margin:0">${has ? b.d : "🔒 " + b.d}</p></div>`;
+  }).join("") + `</div>
+  <div class="card"><h3>✅ The daily checklist</h3><p class="sub">The non-negotiables. Do one a day, check in, keep the streak.</p>
+  <ul class="clean"><li>🧘 10 min silent sitting</li><li>🔊 One frequency session</li><li>🚶 Barefoot grounding 10 min</li><li>📓 Journal one page</li><li>🌬️ 5 rounds box breathing</li></ul>
+  <a href="#/practice" style="color:var(--gold)">Check in today's practice →</a></div>`;
+}
+
+/* ---------- no-login page (kept so old #/login links still land somewhere kind) ---------- */
+function vLogin() {
+  return `<div style="max-width:430px;margin:26px auto">
+    <div style="text-align:center;margin-bottom:14px"><div style="font-size:64px">👁️</div>
+      <h1 style="margin:6px 0 2px">ThirdEye</h1>
+      <p class="sub">No login needed. The eye is open —<br>the full guide is free for every seeker.</p></div>
+    <div class="card" style="text-align:center">
+      <button class="btn btn-gold btn-block" onclick="location.hash='#/'">Enter the app →</button>
+      <p class="sub" style="margin:10px 0 0">Your progress, journal and streaks save on this device.</p>
+    </div>
+    ${creditCard()}
+  </div>`;
+}
+
+/* ---------- router ---------- */
+const routes = [
+  [/^#\/?$/, vHome],
+  [/^#\/path$/, vPath],
+  [/^#\/frequencies$/, vFrequencies],
+  [/^#\/chakras$/, vChakras],
+  [/^#\/chakra\/([\w-]+)$/, (m) => vChakra(m[1])],
+  [/^#\/luminaries$/, vLuminaries],
+  [/^#\/fingers$/, vFingers],
+  [/^#\/mudra\/([\w-]+)$/, (m) => vMudra(m[1])],
+  [/^#\/points$/, vPoints],
+  [/^#\/point\/([a-z0-9-]+)$/, (m) => vPointLesson(m[1])],
+  [/^#\/astral$/, vAstral],
+  [/^#\/pineal$/, vPineal],
+  [/^#\/hearth$/, vHearth],
+  [/^#\/hearth\/([\w-]+)$/, (m) => vHearthLesson(m[1])],
+  [/^#\/labels$/, vLabels],
+  [/^#\/label\/([\w-]+)$/, (m) => vLabel(m[1])],
+  [/^#\/diet$/, vDiet],
+  [/^#\/tesla$/, vTesla],
+  [/^#\/shilajit$/, vShilajit],
+  [/^#\/manifest$/, vManifest],
+  [/^#\/kundalini$/, vKundalini],
+  [/^#\/oldworld$/, vOldWorld],
+  [/^#\/bible$/, vBible],
+  [/^#\/scripture$/, vScripture],
+  [/^#\/search\/?$/, () => vSearch("")],
+  [/^#\/search\/(.+)$/, (m) => vSearch(decodeURIComponent(m[1]))],
+  [/^#\/scripture\/([\w-]+)$/, (m) => vScriptureBook(m[1])],
+  [/^#\/scripture\/([\w-]+)\/(\d+)$/, (m) => vScriptureChapter(m[1], m[2])],
+  [/^#\/sos$/, vSos],
+  [/^#\/journal$/, vJournal],
+  [/^#\/practice$/, vPractice],
+  [/^#\/journey$/, vJourney],
+  [/^#\/login$/, vLogin],
+];
+function render() {
+  stopTone();
+  const h = (typeof location !== "undefined" && location.hash) || "#/";
+  let matched = false;
+  for (const [re, fn] of routes) {
+    const m = h.match(re);
+    if (m) { app.innerHTML = fn(m); matched = true; break; }
+  }
+  if (!matched) app.innerHTML = `<h2>Not found</h2><p class="sub">That page isn't in this guide. <a href="#/" style="color:var(--gold)">Back home →</a></p>`;
+  if (typeof window !== "undefined" && window.scrollTo) window.scrollTo(0, 0);
+  document.querySelectorAll("#mainNav a").forEach(a =>
+    a.classList.toggle("active", a.getAttribute("href") === h));
+  const nav = document.getElementById("mainNav");
+  if (nav) nav.classList.remove("open");
+}
+if (typeof window !== "undefined" && window.addEventListener) window.addEventListener("hashchange", render);
